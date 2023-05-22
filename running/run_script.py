@@ -1,6 +1,7 @@
-import sys 
-sys.setrecursionlimit(1000000)
-# sys.path.append("c:\\qarch\\qsurface\\")
+# import sys 
+# sys.setrecursionlimit(1000000)
+# sys.path.append("c:\\users\\mick9\\qsurface\\")
+# print(sys.path)
 
 from qsurface.main import initialize, run, run_multiprocess, run_multiprocess_superoperator, BenchmarkDecoder
 from os import listdir
@@ -51,15 +52,15 @@ benchmarker = BenchmarkDecoder({
 "decode": ["duration", "value_to_list"],
 "correct_edge": "count_calls"})
 
-code, decoder = initialize((6,6), "weight_0_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_0.025_0.025_0.025_0.025_toric.csv", initial_states=(0,0))
-# code, decoder = initialize((6,6), "weight_3_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_3_toric_px_0.025_pz_0.025_prx_0.025_prz_0.025_pmx_0.025_pmz_0.025_ghz_1.csv", initial_states=(0,0))
-# code, decoder = initialize((6,6), "weight_4_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_4_toric_px_0.01_pz_0.01_pmx_0.01_pmz_0.01_ghz_1.csv", initial_states=(0,0))
+# code, decoder = initialize((6,6), "toric", "lazy_mwpm", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_0_toric_rates_px_0.03_pz_0.03_pmx_0.03_pmz_0.03.csv", initial_states=(0,0))
+# # code, decoder = initialize((6,6), "weight_3_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_3_toric_px_0.025_pz_0.025_prx_0.025_prz_0.025_pmx_0.025_pmz_0.025_ghz_1.csv", initial_states=(0,0))
+# # code, decoder = initialize((6,6), "weight_4_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_4_toric_px_0.01_pz_0.01_pmx_0.01_pmz_0.01_ghz_1.csv", initial_states=(0,0))
 
-# print(run(code, decoder, iterations=5000, decode_initial=False, benchmark=benchmarker))
+# print(run(code, decoder, iterations=20, decode_initial=False, benchmark=benchmarker))
 
 
-# code, decoder = initialize((6,6), "toric", "unionfind", plotting=False, enabled_errors=["pauli"], faulty_measurements=True)
-# print(run(code, decoder, iterations=1000, decode_initial=False, error_rates = {"p_bitflip": 0.07, "p_phaseflip": 0.07, "p_bitflip_plaq": 0.07, "p_bitflip_star": 0.07}, benchmark=benchmarker))
+# code, decoder = initialize((5,5), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+# print(run(code, decoder, iterations=1000, decode_initial=False, error_rates = {"p_bitflip": 0.01, "p_phaseflip": 0.01, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker))
 
 '''####################################################
         WEIGHT-X ARCHITECTURES' VERIFICATION
@@ -107,3 +108,24 @@ code, decoder = initialize((6,6), "weight_0_toric", "unionfind", plotting=False,
 #         export_data = pd.DataFrame(plot_points)
 
 #         export_data.to_json(export_location)
+
+# LAZY SPEEDUP
+# Perfect measurements, 2D Toric, p = 10^-3 and code (1225, 1024, 841, 729, 576, 441, 361, 225, 144, 100, 49, 25) -> (35, 32, 29, 27, 24, 21, 19, 15, 12, 10, 7,5)
+
+distance = []
+lazy_time = []
+mwpm_time = []
+
+for d in [5, 7, 10, 12, 15, 19, 21, 24, 27, 29, 32, 35]:
+   
+   code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+   lazy = run(code, decoder, iterations=1000000, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker)
+   lazy_time.append(lazy['benchmark']['duration/decode/mean'])
+   code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+   mwpm = run(code, decoder, iterations=1000000, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker)
+   mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
+   print(d)
+
+   # figure here
+print(lazy_time)
+print(mwpm_time)

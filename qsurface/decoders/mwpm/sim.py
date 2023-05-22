@@ -9,7 +9,6 @@ import os
 
 LA = List[AncillaQubit]
 
-
 class Toric(Sim):
     """Minimum-Weight Perfect Matching decoder for the toric lattice.
 
