@@ -117,7 +117,7 @@ class PerfectMeasurements(ABC):
         else:
             self.no_error = True if not any(logical_state.values()) else False
         self.prev_logical_state = logical_state
-        return logical_state
+        return logical_state 
 
     @property
     def trivial_ancillas(self):
