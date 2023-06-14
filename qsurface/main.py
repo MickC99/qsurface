@@ -378,7 +378,7 @@ def run(
     output = {"no_error": 0}
 
     for iteration in range(iterations):
-        print(f"Running iteration {iteration+1}/{iterations}", end="\r")
+        # print(f"Running iteration {iteration+1}/{iterations}", end="\r")
         if code.superoperator_enabled:
             code.init_superoperator_errors() # Reinitialize the errors for every iteration
             code.superoperator_random_errors() #Applying fresh random errors on the current code with the superoperator file

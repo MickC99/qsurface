@@ -1,14 +1,17 @@
 from typing import List, Tuple
-from qsurface.codes.elements import AncillaQubit
+from qsurface.codes.elements import AncillaQubit, Edge
 from .._template import Sim
 import networkx as nx
 from numpy.ctypeslib import ndpointer
 import ctypes
 import os
-import contextlib
+import line_profiler
+import time
+
 
 LA = List[AncillaQubit]
-LAZ = LA
+LE = List[Edge]
+
 
 class Toric(Sim):
 
@@ -25,59 +28,106 @@ class Toric(Sim):
     )
     
     def decode(self, **kwargs):
-        # Inherited docstring
+        
+        # Make copies of syndrome lists
         plaqs, stars = self.get_syndrome()
+        plaqs_copy = plaqs.copy()
+        stars_copy = stars.copy()
 
+
+        # ADD1: THIS PART SHOULD BE RUN WHEN WEIGHT TESTING IS RUN FOR THE LAZY DECODER.
+        # plaqs_weight = self._weight_correction(plaqs, self.match_syndromes(plaqs, **kwargs))
+
+        # Create edges
+        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        
         # Performs lazy decoder first, mwpm when lazy fails
-        plaqs_lazy = self.lazy_checking(plaqs, plaqs.copy(), **kwargs)
-        stars_lazy = self.lazy_checking(stars, stars.copy(), **kwargs)
+        plaqs_lazy = self.lazy_checking(plaqs, plaqs_edges, **kwargs)
+        stars_lazy = self.lazy_checking(stars, stars_edges, **kwargs)
+        
+        # Reset syndrome list in case of failure and run mwpm
         if plaqs_lazy == 'Failure':
+            plaqs = plaqs_copy
             self.correct_matching(plaqs, self.match_syndromes(plaqs, **kwargs))
+        
         if stars_lazy == 'Failure':
+            stars = stars_copy
             self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
 
-    @contextlib.contextmanager
-    def undo_actions():
-        try:
-            yield
-        finally:
-            pass
         
-    def lazy_checking(self, syndromes: LA, uncorrected: LAZ, **kwargs):
+        # ADD2: THIS PART SHOULD BE RUN WHEN WEIGHT TESTING IS RUN FOR THE LAZY DECODER.
+        # if plaqs_lazy != "Failure":
+        #     weight = float(len(plaqs_copy) / plaqs_weight) == 2 if plaqs_weight != 0 else True
+        #     if not weight:
+        #         print("Lazy decoder solved higher than weight 1")
+        
 
-        failure = False
-        error_list = []
-        match_found = True
-        for a, ancilla in enumerate(syndromes):
-            match_found = False
-            for b, ancilla in enumerate(syndromes):
-                if b != a:
-                    try:
-                        # Tries to find a shared data qubit between ancillas a and b. Once found, the defect is resolved.
-                        shared_data_qubit_key = next((key for key, dq1 in syndromes[a].parity_qubits.items() for j, dq2 in syndromes[b].parity_qubits.items() if dq1 == dq2), None)
-                        if shared_data_qubit_key is not None:
-                            error_list.append([syndromes[a], shared_data_qubit_key])
-                            del syndromes[a]
-                            del syndromes[b-1] #-1 since list loses one item
-                            match_found = True
-                            break
-                    except StopIteration:
-                        pass
+    # def lazy_checking(self, syndromes: LA, **kwargs):
+
+    #     failure = False
+    #     error_list = []
+    #     match_found = True
+
+    #     if len(syndromes) == 0:
+    #         pass
+
+
+    #     # Find syndromes until syndrome list is emptied
+    #     while len(syndromes) > 0:
+    #         match_found = False
+    #         data_qubits_dictionary = syndromes[0].parity_qubits.items()
+
+    #         for a in range(1, len(syndromes)):
+    #             try:
+    #                 # Tries to find a shared data qubit between ancillas a and b. Once found, the defect is resolved.
+    #                 shared_data_qubit_key = next((key for key, dq1 in data_qubits_dictionary for j, dq2 in syndromes[a].parity_qubits.items() if dq1 == dq2), None)
+    #                 if shared_data_qubit_key is not None:
+    #                     error_list.append([syndromes[0], shared_data_qubit_key])
+    #                     del syndromes[a]
+    #                     del syndromes[0]
+    #                     match_found = True
+    #                     break
+
+    #             # Avoids error when no match is found between qubits 0 and a 
+    #             except StopIteration:
+    #                 pass
             
-            # If no match is found for ancilla a, the error is too complicated for the lazy decoder
-            if not match_found:
-                failure = True
-                syndromes = uncorrected
-                error_list = []
-                break
+    #         # If no match is found for ancilla 0, the error is too complicated for the lazy decoder
+    #         if not match_found:
+    #             failure = True
+    #             break
 
-        if failure:
+    #     if failure:
+    #         return "Failure"
+
+    #     # Correct all errors found
+    #     else:
+    #         for correction in error_list:
+    #             self.correct_edge(correction[0], correction[1]) 
+
+    def lazy_checking(self, syndromes: LA, edges, **kwargs):
+        error_list = []
+
+        if len(syndromes) == 0:
+            return
+        
+        for edge in edges:
+            ancilla1, ancilla2 = edge
+
+            # Check if both ancilla qubits are in the syndrome set
+            if ancilla1 in syndromes and ancilla2 in syndromes:
+                error_list.append(edge)
+                syndromes.remove(ancilla1)
+                syndromes.remove(ancilla2)
+
+        if syndromes:
             return "Failure"
 
         # Correct all errors found
-        else:
-            for correction in error_list:
-                self.correct_edge(correction[0], correction[1])
+        for pair in error_list:
+            key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
+            self.correct_edge(pair[1], key)
 
     def match_syndromes(self, syndromes: LA, use_blossomv: bool = False, **kwargs) -> list:
         """Decodes a list of syndromes of the same type.
@@ -231,3 +281,111 @@ class Toric(Sim):
             except:
                 break
         return qubit
+
+    def _get_weight_of_full_correction(self, aq0: AncillaQubit, aq1: AncillaQubit) -> float:
+        """Aids in determining the weight for the correction used in testing the lazy decoder."""
+        dx, dy, xd, yd = self._walk_direction(aq0, aq1, self.code.size)
+        return dy + dx + abs(aq0.z - aq1.z)
+    
+    def _weight_correction(self, syndromes: LA, matching: list, **kwargs):
+        """Aids in determining the weight for the correction used in testing the lazy decoder."""
+        weight = 0
+        for i0, i1 in matching:
+            weight += self._get_weight_of_full_correction(syndromes[i0], syndromes[i1])
+        return weight
+    
+    def _lazy_walk_direction(self, loc_q0: Tuple[float, float], loc_q1: Tuple[float, float], size: Tuple[float, float]):
+        
+
+        x0, y0 = loc_q0
+        x1, y1 = loc_q1
+
+        dx0 = int(x0 - x1) % size[0]
+        dx1 = int(x1 - x0) % size[0]
+        dy0 = int(y0 - y1) % size[1]
+        dy1 = int(y1 - y0) % size[1]
+        
+        xd = (0.5, 0) if dx0 < dx1 else (-0.5, 0) if dx0 > dx1 else (0, 0)
+        yd = (0, 0.5) if dy0 < dy1 else (0, -0.5) if dy0 > dy1 else (0, 0)
+        
+        return xd if xd != (0, 0) else yd
+
+    
+# PROFILER FUNCTIONS
+
+    # def lazy_checking_profiler_1(self, syndromes: LA, **kwargs):
+    #     profiler = line_profiler.LineProfiler()
+    #     profiler.add_function(self.correct_edge)  # Add any additional functions to profile
+
+    #     # Profile the code line by line
+    #     @profiler
+    #     def profiled_lazy_checking(syndromes):
+    #         failure = False
+    #         error_list = []
+    #         match_found = True
+
+    #         if len(syndromes) == 0:
+    #             return
+
+    #         while len(syndromes) > 0:
+    #             match_found = False
+    #             data_qubits_dictionary = syndromes[0].parity_qubits.items()
+
+    #             for a in range(1, len(syndromes)):
+    #                 try:
+    #                     shared_data_qubit_key = next((key for key, dq1 in data_qubits_dictionary for j, dq2 in syndromes[a].parity_qubits.items() if dq1 == dq2), None)
+    #                     if shared_data_qubit_key is not None:
+    #                         error_list.append([syndromes[0], shared_data_qubit_key])
+    #                         del syndromes[a]
+    #                         del syndromes[0]
+    #                         match_found = True
+    #                         break
+    #                 except StopIteration:
+    #                     pass
+
+    #             if not match_found:
+    #                 failure = True
+    #                 break
+
+    #         if failure:
+    #             return "Failure"
+    #         else:
+    #             for correction in error_list:
+    #                 self.correct_edge(correction[0], correction[1])
+
+    #     # Run the profiled version of the function
+    #     profiled_lazy_checking(syndromes)
+
+    #     # Print the profiling results
+    #     profiler.print_stats()
+
+    # def lazy_checking_profiler_2(self, syndromes: LA, edges, **kwargs):
+    #     profiler = line_profiler.LineProfiler()
+
+    #     @profiler
+    #     def populate_error_list(edges, syndromes):
+    #         error_list = set()
+    #         syndromes = set(syndromes)
+    #         for edge in edges:
+    #             ancilla1, ancilla2 = edge
+
+    #             if ancilla1 in syndromes and ancilla2 in syndromes:
+    #                 error_list.add(tuple(edge))
+    #                 syndromes.remove(ancilla1)
+    #                 syndromes.remove(ancilla2)
+    #         return error_list
+
+    #     @profiler
+    #     def correct_errors(error_list):
+    #         for pair in error_list:
+    #             key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
+    #             self.correct_edge(pair[1], key)
+
+    #     error_list = populate_error_list(edges, syndromes)
+
+    #     if syndromes:
+    #         return "Failure"
+
+    #     correct_errors(error_list)
+
+    #     profiler.print_stats()

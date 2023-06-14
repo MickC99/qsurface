@@ -9,6 +9,7 @@ import os
 
 LA = List[AncillaQubit]
 
+
 class Toric(Sim):
     """Minimum-Weight Perfect Matching decoder for the toric lattice.
 
@@ -29,10 +30,13 @@ class Toric(Sim):
         pauli=True,
         erasure=True,
     )
-
+    
     def decode(self, **kwargs):
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
+        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        
         self.correct_matching(plaqs, self.match_syndromes(plaqs, **kwargs))
         self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
 
