@@ -381,6 +381,7 @@ class FaultyMeasurements(PerfectMeasurements):
         self.superoperator_enabled = superoperator_enabled
         self.superoperator_size = 0
         self.superoperator_data = {}
+        self.time_edges = []
         # self.stars = {}
         # self.plaquettes = {}
         # self.superoperator_errors_list = {}
@@ -429,20 +430,28 @@ class FaultyMeasurements(PerfectMeasurements):
         self.init_logical_operator(**kwargs)
         self.init_errors(*args, **kwargs)
 
+
     def init_surface(self, **kwargs):
         """Initiates the surface code.
 
         The 3D lattice is initialized by first building the ground layer. After that each consecutive layer is built and pseudo-edges are added to connect the ancilla qubits of each layer.
         """
+        vertical_edges = {}
         super().init_surface(z=0, **kwargs)
         for z in range(1, self.layers):
             super().init_surface(z=z, **kwargs)
+            vertical_edges[z-1] = []
             for upper in self.ancilla_qubits[z].values():
                 lower = self.ancilla_qubits[z - 1][upper.loc]
                 self.add_vertical_edge(lower, upper)
+                vertical_edges[z-1].append([lower,upper])
         for lower in self.ancilla_qubits[self.layers - 1].values():
             upper = self.ancilla_qubits[0][lower.loc]
             self.add_vertical_edge(lower, upper)
+        
+        self.time_edges = vertical_edges
+
+
 
     def add_vertical_edge(
         self,

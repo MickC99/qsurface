@@ -61,8 +61,8 @@ benchmarker = BenchmarkDecoder({
 # print(run(code, decoder, iterations=20, decode_initial=False, benchmark=benchmarker))
 
 
-# code, decoder = initialize((5,5), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-# print(run(code, decoder, iterations=10, decode_initial=False, error_rates = {"p_bitflip": 0.05, "p_phaseflip": 0.05, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.00}, benchmark=benchmarker))
+code, decoder = initialize((3,3), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+print(run(code, decoder, iterations=1, decode_initial=False, error_rates = {"p_bitflip": 0.01, "p_phaseflip": 0.0, "p_bitflip_plaq": 0.01, "p_bitflip_star": 0.0}, benchmark=benchmarker))
 
 #print([pair.edges['z'].nodes for pair in code.data_qubits.values()])
 '''####################################################
@@ -112,7 +112,7 @@ benchmarker = BenchmarkDecoder({
 
 #         export_data.to_json(export_location)
 
-# LAZY SPEEDUP
+# LAZY SPEEDUP 2D
 # Perfect measurements, 2D Toric, p = 10^-3 and code (1225, 1024, 841, 729, 576, 441, 361, 225, 144, 100, 49, 25) -> (35, 32, 29, 27, 24, 21, 19, 15, 12, 10, 7,5)
 
 lazy_time = []
@@ -129,11 +129,53 @@ chosen_iterations = 1000
 for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
    
    code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-   lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker)
+   lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
    lazy_time.append(lazy['benchmark']['duration/decode/mean'])
    lazy_success.append(float(lazy['no_error']/ chosen_iterations))
    code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-   mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker)
+   mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
+   mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
+   mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
+
+   speedup.append(mwpm['benchmark']['duration/decode/mean']/lazy['benchmark']['duration/decode/mean'])
+   physical_qubits.append(4*d*d)
+   print(d)
+
+   # figure here
+print(speedup)
+print(lazy_success, mwpm_success)
+
+plt.plot(physical_qubits, lazy_time, 'bo-', label='Lazy + MWPM')
+plt.plot(physical_qubits, mwpm_time, 'ro-', label='None + MWPM')
+plt.xlabel('Number of physical qubits')
+plt.ylabel('Execution time for pZ = pX = 0.001')
+plt.title('Lazy Decoder as decoder accelerator with faulty measurements')
+plt.yscale('log')
+plt.legend()
+plt.show()
+
+# LAZY SPEEDUP
+# Perfect measurements, 3D Toric, p = 10^-3 for both data and ancilla qubits, and code (1225, 1024, 841, 729, 576, 441, 361, 225, 144, 100, 49, 25) -> (35, 32, 29, 27, 24, 21, 19, 15, 12, 10, 7,5)
+
+lazy_time = []
+lazy_success = []
+
+mwpm_time = []
+mwpm_success = []
+
+speedup = []
+
+physical_qubits = []
+chosen_iterations = 1000
+
+for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
+   
+   code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+   lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
+   lazy_time.append(lazy['benchmark']['duration/decode/mean'])
+   lazy_success.append(float(lazy['no_error']/ chosen_iterations))
+   code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+   mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
    mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
    mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
 
@@ -190,15 +232,15 @@ plt.show()
 # success = []
 # failure = []
 
-# for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
+# for d in [4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
    
-#    code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-#    lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.01, "p_phaseflip": 0.0, "p_bitflip_plaq": 0, "p_bitflip_star": 0}, benchmark=benchmarker)
+#    code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+#    lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.0, "p_phaseflip": 0.0, "p_bitflip_plaq": 0.1, "p_bitflip_star": 0}, benchmark=benchmarker)
 #    print(d)
 
 
-# # LAZY SUCCESS CHECKING
-# # For each d, it checks if the lazy decoder actually succeeds in cases it should succeed
+# LAZY SUCCESS CHECKING
+# For each d, it checks if the lazy decoder actually succeeds in cases it should succeed
 
 # # Calculates manhattan distance for two ancillas in toric code
 # def calculate_distance(d, coord1, coord2):
@@ -241,7 +283,7 @@ plt.show()
 #                 ((i + 1) % d, j, k),
 #                 (i, (j - 1) % d, k),
 #                 (i, (j + 1) % d, k),
-#                 #(i, (j + 1) % d, k+1)
+#                 (i, j, k+1)
 #             ]
 #         elif k == d - 1:
 #             neighbors = [
@@ -249,8 +291,7 @@ plt.show()
 #                 ((i + 1) % d, j, k),
 #                 (i, (j - 1) % d, k),
 #                 (i, (j + 1) % d, k),
-#                 #(i, (j + 1) % d, k-1),
-#                 #(i, (j + 1) % d, k+1)
+#                 (i, j, k-1)
 #             ]
 #         else:
 #             neighbors = [
@@ -258,7 +299,8 @@ plt.show()
 #                 ((i + 1) % d, j, k),
 #                 (i, (j - 1) % d, k),
 #                 (i, (j + 1) % d, k),
-#                 #(i, (j + 1) % d, k-1)
+#                 (i, j, k-1),
+#                 (i, j, k+1)
 #             ]
          
 #          # Shuffle neighbours so a random pair is created
@@ -339,7 +381,8 @@ plt.show()
 #     for i in range(1000):
 #         N = random.randint(0,d-2)
 #         code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
-#         plaqs_edges = [code.data_qubits[i][(x, y)].edges['x'].nodes for i in code.data_qubits for (x, y) in code.data_qubits[i]]
+#         n = len(code.data_qubits)
+#         plaqs_edges = sum([[code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in code.data_qubits[i]] + code.time_edges[i] for i in range(n-1)], []) + [code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in code.data_qubits[n-1]]
 #         ancilla_dictionary = create_dictionary()
 #         syndromes = []
 #         for item in generate_pairs(d,N):

@@ -5,8 +5,7 @@ import networkx as nx
 from numpy.ctypeslib import ndpointer
 import ctypes
 import os
-import line_profiler
-import time
+import itertools
 
 
 LA = List[AncillaQubit]
@@ -34,15 +33,20 @@ class Toric(Sim):
         plaqs_copy = plaqs.copy()
         stars_copy = stars.copy()
 
-
         # ADD1: THIS PART SHOULD BE RUN WHEN WEIGHT TESTING IS RUN FOR THE LAZY DECODER.
         # plaqs_weight = self._weight_correction(plaqs, self.match_syndromes(plaqs, **kwargs))
-
-        # Create edges
+        
+        # Create list of edges
         plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
         stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
-        
-        # Performs lazy decoder first, mwpm when lazy fails
+
+        # Add vertical edges in case of faulty measurements, such that each layer is checked first and then its vertical edges
+        if type(self.code).__name__ == "FaultyMeasurements":
+            n = len(self.code.data_qubits)
+            plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
+            stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
+
+        # Performs lazy decoder first, mwpm when lazy fails FIX FIRST LAYER THEN TIME ETC.
         plaqs_lazy = self.lazy_checking(plaqs, plaqs_edges, **kwargs)
         stars_lazy = self.lazy_checking(stars, stars_edges, **kwargs)
         
@@ -61,50 +65,8 @@ class Toric(Sim):
         #     weight = float(len(plaqs_copy) / plaqs_weight) == 2 if plaqs_weight != 0 else True
         #     if not weight:
         #         print("Lazy decoder solved higher than weight 1")
+        #         print(plaqs_copy, plaqs_weight)
         
-
-    # def lazy_checking(self, syndromes: LA, **kwargs):
-
-    #     failure = False
-    #     error_list = []
-    #     match_found = True
-
-    #     if len(syndromes) == 0:
-    #         pass
-
-
-    #     # Find syndromes until syndrome list is emptied
-    #     while len(syndromes) > 0:
-    #         match_found = False
-    #         data_qubits_dictionary = syndromes[0].parity_qubits.items()
-
-    #         for a in range(1, len(syndromes)):
-    #             try:
-    #                 # Tries to find a shared data qubit between ancillas a and b. Once found, the defect is resolved.
-    #                 shared_data_qubit_key = next((key for key, dq1 in data_qubits_dictionary for j, dq2 in syndromes[a].parity_qubits.items() if dq1 == dq2), None)
-    #                 if shared_data_qubit_key is not None:
-    #                     error_list.append([syndromes[0], shared_data_qubit_key])
-    #                     del syndromes[a]
-    #                     del syndromes[0]
-    #                     match_found = True
-    #                     break
-
-    #             # Avoids error when no match is found between qubits 0 and a 
-    #             except StopIteration:
-    #                 pass
-            
-    #         # If no match is found for ancilla 0, the error is too complicated for the lazy decoder
-    #         if not match_found:
-    #             failure = True
-    #             break
-
-    #     if failure:
-    #         return "Failure"
-
-    #     # Correct all errors found
-    #     else:
-    #         for correction in error_list:
-    #             self.correct_edge(correction[0], correction[1]) 
 
     def lazy_checking(self, syndromes: LA, edges, **kwargs):
         error_list = []
@@ -112,6 +74,7 @@ class Toric(Sim):
         if len(syndromes) == 0:
             return
         
+        # Iterate over all edges
         for edge in edges:
             ancilla1, ancilla2 = edge
 
@@ -120,14 +83,17 @@ class Toric(Sim):
                 error_list.append(edge)
                 syndromes.remove(ancilla1)
                 syndromes.remove(ancilla2)
-
+        
+        # Return failure if there are syndromes left
         if syndromes:
             return "Failure"
 
-        # Correct all errors found
+        # Correct all data qubit errors found
         for pair in error_list:
-            key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
-            self.correct_edge(pair[1], key)
+            top_layer_ancilla, key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
+            if key != "Time":
+                self.correct_edge(top_layer_ancilla, key)
+        
 
     def match_syndromes(self, syndromes: LA, use_blossomv: bool = False, **kwargs) -> list:
         """Decodes a list of syndromes of the same type.
@@ -296,6 +262,9 @@ class Toric(Sim):
     
     def _lazy_walk_direction(self, loc_q0: Tuple[float, float], loc_q1: Tuple[float, float], size: Tuple[float, float]):
         
+        # Ensures that the correct time-layer is used
+        ancillas = self.code.ancilla_qubits[self.code.decode_layer]
+        aq1 = ancillas[loc_q1]
 
         x0, y0 = loc_q0
         x1, y1 = loc_q1
@@ -305,10 +274,17 @@ class Toric(Sim):
         dy0 = int(y0 - y1) % size[1]
         dy1 = int(y1 - y0) % size[1]
         
+        # Calculate direction key for aq1 for edge to aq0
         xd = (0.5, 0) if dx0 < dx1 else (-0.5, 0) if dx0 > dx1 else (0, 0)
         yd = (0, 0.5) if dy0 < dy1 else (0, -0.5) if dy0 > dy1 else (0, 0)
         
-        return xd if xd != (0, 0) else yd
+        # Return correct key in cases of either faulty measurement or qubit error
+        if xd != (0, 0):
+            return (aq1, xd)
+        elif yd != (0, 0):
+            return (aq1, yd)
+        else:
+            return (aq1, "Time")
 
     
 # PROFILER FUNCTIONS

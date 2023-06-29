@@ -5,6 +5,7 @@ import networkx as nx
 from numpy.ctypeslib import ndpointer
 import ctypes
 import os
+import multiprocessing
 
 
 LA = List[AncillaQubit]
@@ -34,20 +35,71 @@ class Toric(Sim):
     def decode(self, **kwargs):
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
-        
-        # Create list of edges
-        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
-        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        d = self.code.size[0]
+        window_size = 3*d
+        parallel_processes = 16
+        # code.layer seems to be of no use
 
-        # Add vertical edges in case of faulty measurements, such that each layer is checked first and then its vertical edges
-        if type(self.code).__name__ == "FaultyMeasurements":
-            n = len(self.code.data_qubits)
-            plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
-            stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
+        A_n, B_n = self.divide_into_windows(plaqs,  d, parallel_processes)
+
+        # Decode initial windows in parallel
+        with multiprocessing.Pool(processes=parallel_processes) as pool:
+            pool.map(self.match_syndromes, A_n)
+            
+        # O(n)
+        for i, window in A_n.items():
+            if i == 0:
+                for item in window:
+                    item[1] = (0 <= item[0].z < (2/3)*window_size)
+            elif i == parallel_processes - 1:
+                for item in window:
+                    item[1] = ((parallel_processes  * (window_size+d)) -d - (2/3)*window_size < item[0].z <= (parallel_processes  * (window_size+d)) -d)
+            else:
+                for item in window:
+                    item[1] = (window_size / 3 <= item[0].z - i*(window_size+d) < 2*window_size/3)
         
-        self.correct_matching(plaqs, self.match_syndromes(plaqs, **kwargs))
+        
+        # # Create second iteration windows
+
+
+        # # Decode second iteration windows
+        # with multiprocessing.Pool(processes=parallel_processes-1) as pool:
+        #     pool.map(fulldecoder, distribution_B)
+
         self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
 
+    def divide_into_windows(self, syndromes, d, parallel_processes):
+        windows = {}
+        gaps = {}
+
+        window_size = 3 * d
+
+        # O(n)
+        for syndrome in syndromes:
+            window_index = syndrome.z // (window_size + d)
+            window_point = float(syndrome.z / (window_size + d))
+
+            if window_index not in windows:
+                windows[window_index] = []
+
+            if window_index not in gaps:
+                gaps[window_index] = []
+
+            if 0.75 <= (window_point % 1) < 1:
+                gaps[window_index].append(syndrome)
+            else:
+                windows[window_index].append(syndrome)
+
+
+        return windows, gaps
+    
+    def com_or_buf(self, qubit, d, parallel_processes):
+        window_size = 3*d
+        result = [(0 <= qubit < (2/3) * window_size) if window_index == 0 else
+          ((parallel_processes * (window_size + d)) - d - (2/3) * window_size < a.z <= (parallel_processes * (window_size + d)) - d) if window_index == parallel_processes - 1 else
+          (window_size / 3 <= a.z - window_index * (window_size + d) < 2 * window_size / 3)
+          for window_index, (a, b) in A_n.items()]
+    
     def match_syndromes(self, syndromes: LA, use_blossomv: bool = False, **kwargs) -> list:
         """Decodes a list of syndromes of the same type.
 

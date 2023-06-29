@@ -298,7 +298,7 @@ def initialize(
 
     decoder = Decoder_flow_code(code, **kwargs)
 
-    return code, decoder 
+    return code, decoder
 
 
 def run(
