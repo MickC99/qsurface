@@ -40,26 +40,47 @@ class Toric(Sim):
         parallel_processes = 16
         # code.layer seems to be of no use
 
-        A_n, B_n = self.divide_into_windows(plaqs,  d, parallel_processes)
+        A_n = self.divide_into_windows(plaqs,  d, parallel_processes)
 
+             
+        print(A_n.values())
         # Decode initial windows in parallel
         with multiprocessing.Pool(processes=parallel_processes) as pool:
-            pool.map(self.match_syndromes, A_n)
+            pool.map(self.match_syndromes, list(A_n.values()))
+
+        # plaqs_list = self.match_syndromes(plaqs , **kwargs)
+
+        # for i0, i1 in plaqs_list:
+        #     q0 = plaqs[i0]
+        #     q1 = plaqs[i1]
             
-        # O(n)
-        for i, window in A_n.items():
-            if i == 0:
-                for item in window:
-                    item[1] = (0 <= item[0].z < (2/3)*window_size)
-            elif i == parallel_processes - 1:
-                for item in window:
-                    item[1] = ((parallel_processes  * (window_size+d)) -d - (2/3)*window_size < item[0].z <= (parallel_processes  * (window_size+d)) -d)
-            else:
-                for item in window:
-                    item[1] = (window_size / 3 <= item[0].z - i*(window_size+d) < 2*window_size/3)
+        #     if self.commit(q0, d, parallel_processes) and self.commit(q1, d, parallel_processes):
+        #         self._correct_matched_qubits(q0, q1)
+        #         # print("Yes", q0, q1)
+        #     elif self.commit(q0, d, parallel_processes) ^ self.commit(q1, d, parallel_processes):
+        #         print("No", q0, q1)
+                
+        
+        # Extra check to verify ncom, nbuf
+        # for i, window in A_n.items():
+        #     n_com = False
+        #     if i == 0:
+        #         for item in window:
+        #             n_com = (0 <= item[0].z < (2/3)*window_size)
+        #     elif i == parallel_processes - 1:
+        #         for item in window:
+        #             n_com = ((parallel_processes  * (window_size+d)) -d - (2/3)*window_size < item[0].z <= (parallel_processes  * (window_size+d)) -d)
+        #     else:
+        #         for item in window:
+        #             n_com = (window_size / 3 <= item[0].z - i*(window_size+d) < 2*window_size/3)
         
         
-        # # Create second iteration windows
+        
+        B_n = self.second_divide_into_windows(plaqs, d, parallel_processes)
+        
+        
+        with multiprocessing.Pool(processes=parallel_processes-1) as pool:
+            pool.map(self.match_syndromes, list(B_n.values()))
 
 
         # # Decode second iteration windows
@@ -68,9 +89,10 @@ class Toric(Sim):
 
         self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
 
+
+    # Divides decoding graph into windows and gaps
     def divide_into_windows(self, syndromes, d, parallel_processes):
         windows = {}
-        gaps = {}
 
         window_size = 3 * d
 
@@ -82,23 +104,50 @@ class Toric(Sim):
             if window_index not in windows:
                 windows[window_index] = []
 
-            if window_index not in gaps:
-                gaps[window_index] = []
+            if 0 <= (window_point % 1) < 0.75:
+                windows[window_index].append(syndrome)
+                
 
-            if 0.75 <= (window_point % 1) < 1:
-                gaps[window_index].append(syndrome)
-            else:
+
+        return windows
+    
+    # Divides decoding graph into windows and gaps
+    def second_divide_into_windows(self, syndromes, d, parallel_processes):
+        windows = {}
+
+        window_size = 3 * d
+                
+        # O(n)
+        for syndrome in syndromes:
+            if syndrome.z < (2/3)*window_size or syndrome.z > (self.code.size[0]*d*parallel_processes - d) - (2/3)*window_size - 1:
+                continue
+            window_index = (syndrome.z - d) // (window_size+d)
+            window_point = float((syndrome.z - d) / (window_size+d))
+
+            if window_index not in windows:
+                windows[window_index] = []
+
+            if 0.25 <= (window_point % 1) < 1:
                 windows[window_index].append(syndrome)
 
-
-        return windows, gaps
+        return windows
     
-    def com_or_buf(self, qubit, d, parallel_processes):
-        window_size = 3*d
-        result = [(0 <= qubit < (2/3) * window_size) if window_index == 0 else
-          ((parallel_processes * (window_size + d)) - d - (2/3) * window_size < a.z <= (parallel_processes * (window_size + d)) - d) if window_index == parallel_processes - 1 else
-          (window_size / 3 <= a.z - window_index * (window_size + d) < 2 * window_size / 3)
-          for window_index, (a, b) in A_n.items()]
+
+    # Checks whether a given qubit is in the committed region of a window
+    def commit(self, qubit, d, parallel_processes):
+        window_size = 3 * d
+        total_windows = parallel_processes
+
+        layer_index = qubit.z // (window_size * (4 /3))
+
+        if layer_index == 0:
+            return 0 <= qubit.z < (2 / 3) * window_size
+        elif layer_index == total_windows - 1:
+            last_window_start = total_windows * window_size + (total_windows - 1) * d
+            return last_window_start < qubit.z <= last_window_start + window_size
+        else:
+            window_start = layer_index * (window_size + d)
+            return (window_size / 3 <= qubit.z - window_start < 2 * window_size / 3)
     
     def match_syndromes(self, syndromes: LA, use_blossomv: bool = False, **kwargs) -> list:
         """Decodes a list of syndromes of the same type.

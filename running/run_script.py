@@ -61,7 +61,7 @@ benchmarker = BenchmarkDecoder({
 # print(run(code, decoder, iterations=20, decode_initial=False, benchmark=benchmarker))
 
 
-code, decoder = initialize((3,3), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+code, decoder = initialize((4,4), "toric", "parallel_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0), layers = 63*4)
 print(run(code, decoder, iterations=1, decode_initial=False, error_rates = {"p_bitflip": 0.01, "p_phaseflip": 0.0, "p_bitflip_plaq": 0.01, "p_bitflip_star": 0.0}, benchmark=benchmarker))
 
 #print([pair.edges['z'].nodes for pair in code.data_qubits.values()])
@@ -115,86 +115,94 @@ print(run(code, decoder, iterations=1, decode_initial=False, error_rates = {"p_b
 # LAZY SPEEDUP 2D
 # Perfect measurements, 2D Toric, p = 10^-3 and code (1225, 1024, 841, 729, 576, 441, 361, 225, 144, 100, 49, 25) -> (35, 32, 29, 27, 24, 21, 19, 15, 12, 10, 7,5)
 
-lazy_time = []
-lazy_success = []
+# lazy_time = []
+# lazy_success = []
 
-mwpm_time = []
-mwpm_success = []
+# mwpm_time = []
+# mwpm_success = []
 
-speedup = []
+# uf_time = []
+# uf_success = []
 
-physical_qubits = []
-chosen_iterations = 1000
+# speedup = []
 
-for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
+# physical_qubits = []
+# chosen_iterations = 100000
+
+# for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
    
-   code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-   lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
-   lazy_time.append(lazy['benchmark']['duration/decode/mean'])
-   lazy_success.append(float(lazy['no_error']/ chosen_iterations))
-   code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
-   mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
-   mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
-   mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
+#    code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+#    lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.0, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
+#    lazy_time.append(lazy['benchmark']['duration/decode/mean'])
+#    lazy_success.append(float(lazy['no_error']/ chosen_iterations))
+#    code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+#    mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.0, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
+#    mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
+#    mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
+#    code, decoder = initialize((d,d), "toric", "unionfind", plotting=False, enabled_errors=["pauli"], faulty_measurements=False, initial_states = (0,0))
+#    uf = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.0, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.0, "p_bitflip_star": 0.0}, benchmark=benchmarker)
+#    uf_time.append(uf['benchmark']['duration/decode/mean'])
+#    uf_success.append( float(uf['no_error'] / chosen_iterations))
 
-   speedup.append(mwpm['benchmark']['duration/decode/mean']/lazy['benchmark']['duration/decode/mean'])
-   physical_qubits.append(4*d*d)
-   print(d)
+#    speedup.append(mwpm['benchmark']['duration/decode/mean']/lazy['benchmark']['duration/decode/mean'])
+#    physical_qubits.append(4*d*d)
+#    print(d)
 
-   # figure here
-print(speedup)
-print(lazy_success, mwpm_success)
+#    # figure here
+# print(speedup)
+# print(lazy_success, mwpm_success)
 
-plt.plot(physical_qubits, lazy_time, 'bo-', label='Lazy + MWPM')
-plt.plot(physical_qubits, mwpm_time, 'ro-', label='None + MWPM')
-plt.xlabel('Number of physical qubits')
-plt.ylabel('Execution time for pZ = pX = 0.001')
-plt.title('Lazy Decoder as decoder accelerator with faulty measurements')
-plt.yscale('log')
-plt.legend()
-plt.show()
+# plt.plot(physical_qubits, lazy_time, 'bo--', label='Lazier + MWPM')
+# plt.plot(physical_qubits, mwpm_time, 'bo-', label='None + MWPM')
+# plt.plot(physical_qubits, uf_time, 'ro-', label='None + UF')
+# plt.xlabel('Number of physical qubits')
+# plt.ylabel('Execution time for pZ = 0.001')
+# plt.title('Lazier Decoder as decoder accelerator with perfect measurements')
+# plt.yscale('log')
+# plt.legend()
+# plt.show()
 
 # LAZY SPEEDUP
 # Perfect measurements, 3D Toric, p = 10^-3 for both data and ancilla qubits, and code (1225, 1024, 841, 729, 576, 441, 361, 225, 144, 100, 49, 25) -> (35, 32, 29, 27, 24, 21, 19, 15, 12, 10, 7,5)
 
-lazy_time = []
-lazy_success = []
+# lazy_time = []
+# lazy_success = []
 
-mwpm_time = []
-mwpm_success = []
+# mwpm_time = []
+# mwpm_success = []
 
-speedup = []
+# speedup = []
 
-physical_qubits = []
-chosen_iterations = 1000
+# physical_qubits = []
+# chosen_iterations = 100000
 
-for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
+# for d in [3, 4, 5, 6]:
    
-   code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
-   lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
-   lazy_time.append(lazy['benchmark']['duration/decode/mean'])
-   lazy_success.append(float(lazy['no_error']/ chosen_iterations))
-   code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
-   mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
-   mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
-   mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
+#    code, decoder = initialize((d,d), "toric", "lazy_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+#    lazy = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.001, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
+#    lazy_time.append(lazy['benchmark']['duration/decode/mean'])
+#    lazy_success.append(float(lazy['no_error']/ chosen_iterations))
+#    code, decoder = initialize((d,d), "toric", "mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0))
+#    mwpm = run(code, decoder, iterations=chosen_iterations, decode_initial=False, error_rates = {"p_bitflip": 0.0, "p_phaseflip": 0.001, "p_bitflip_plaq": 0.001, "p_bitflip_star": 0.001}, benchmark=benchmarker)
+#    mwpm_time.append(mwpm['benchmark']['duration/decode/mean'])
+#    mwpm_success.append( float(mwpm['no_error'] / chosen_iterations))
 
-   speedup.append(mwpm['benchmark']['duration/decode/mean']/lazy['benchmark']['duration/decode/mean'])
-   physical_qubits.append(4*d*d)
-   print(d)
+#    speedup.append(mwpm['benchmark']['duration/decode/mean']/lazy['benchmark']['duration/decode/mean'])
+#    physical_qubits.append(8*d*d*d)
+#    print(d)
 
-   # figure here
-print(speedup)
-print(lazy_success, mwpm_success)
+#    # figure here
+# print(speedup)
+# print(lazy_success, mwpm_success)
 
-plt.plot(physical_qubits, lazy_time, 'bo-', label='Lazy + MWPM')
-plt.plot(physical_qubits, mwpm_time, 'ro-', label='None + MWPM')
-plt.xlabel('Number of physical qubits')
-plt.ylabel('Execution time for pZ = pX = 0.001')
-plt.title('Lazy Decoder as decoder accelerator with faulty measurements')
-plt.yscale('log')
-plt.legend()
-plt.show()
+# plt.plot(physical_qubits, lazy_time, 'o-', color = 'cyan', label='Lazier + MWPM')
+# plt.plot(physical_qubits, mwpm_time, 'bo-', label='None + MWPM')
+# plt.xlabel('Number of physical qubits')
+# plt.ylabel('Execution time for pZ = 0.001')
+# plt.title('Lazier Decoder as decoder accelerator with faulty measurements')
+# plt.yscale('log')
+# plt.legend()
+# plt.show()
 
 # Lazy accuracy and time
 
