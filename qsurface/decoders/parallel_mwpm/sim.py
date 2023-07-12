@@ -6,6 +6,11 @@ from numpy.ctypeslib import ndpointer
 import ctypes
 import os
 import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+
+
+
 
 
 LA = List[AncillaQubit]
@@ -36,19 +41,24 @@ class Toric(Sim):
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
         d = self.code.size[0]
-        window_size = 3*d
         parallel_processes = 16
-        # code.layer seems to be of no use
 
         A_n = self.divide_into_windows(plaqs,  d, parallel_processes)
 
-             
-        print(A_n.values())
-        # Decode initial windows in parallel
-        with multiprocessing.Pool(processes=parallel_processes) as pool:
-            pool.map(self.match_syndromes, list(A_n.values()))
+        with ThreadPoolExecutor(max_workers=parallel_processes) as executor:
+            matching_results = executor.map(self.match_syndromes, A_n.values())
 
-        # plaqs_list = self.match_syndromes(plaqs , **kwargs)
+            syndrome_lists = list(A_n.values())
+
+            futures = []
+            for matching, syndromes in zip(matching_results, syndrome_lists):
+                future = executor.submit(self.process_matching, syndromes, matching, d, parallel_processes)
+                futures.append(future)
+
+            # Wait for all the futures to complete
+            for future in futures:
+                future.result()
+            
 
         # for i0, i1 in plaqs_list:
         #     q0 = plaqs[i0]
@@ -60,34 +70,22 @@ class Toric(Sim):
         #     elif self.commit(q0, d, parallel_processes) ^ self.commit(q1, d, parallel_processes):
         #         print("No", q0, q1)
                 
-        
-        # Extra check to verify ncom, nbuf
-        # for i, window in A_n.items():
-        #     n_com = False
-        #     if i == 0:
-        #         for item in window:
-        #             n_com = (0 <= item[0].z < (2/3)*window_size)
-        #     elif i == parallel_processes - 1:
-        #         for item in window:
-        #             n_com = ((parallel_processes  * (window_size+d)) -d - (2/3)*window_size < item[0].z <= (parallel_processes  * (window_size+d)) -d)
-        #     else:
-        #         for item in window:
-        #             n_com = (window_size / 3 <= item[0].z - i*(window_size+d) < 2*window_size/3)
-        
-        
-        
         B_n = self.second_divide_into_windows(plaqs, d, parallel_processes)
         
-        
-        with multiprocessing.Pool(processes=parallel_processes-1) as pool:
-            pool.map(self.match_syndromes, list(B_n.values()))
+        # Run the decoding in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_processes) as executor:
+            matching_results = list(executor.map(self.match_syndromes, B_n.values()))
+            syndrome_lists = list(B_n.values())
 
+            futures = []
+            for matching, syndromes in zip(matching_results, syndrome_lists):
+                future = executor.submit(self.correct_matching, syndromes, matching)
+                futures.append(future)
 
-        # # Decode second iteration windows
-        # with multiprocessing.Pool(processes=parallel_processes-1) as pool:
-        #     pool.map(fulldecoder, distribution_B)
-
-        self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
+            # Wait for all the futures to complete
+            for future in futures:
+                future.result()
+        # self.correct_matching(stars, self.match_syndromes(stars, **kwargs))
 
 
     # Divides decoding graph into windows and gaps
@@ -119,7 +117,7 @@ class Toric(Sim):
                 
         # O(n)
         for syndrome in syndromes:
-            if syndrome.z < (2/3)*window_size or syndrome.z > (self.code.size[0]*d*parallel_processes - d) - (2/3)*window_size - 1:
+            if syndrome.z < (2/3)*window_size or syndrome.z > (4*d*parallel_processes - d) - (2/3)*window_size - 1:
                 continue
             window_index = (syndrome.z - d) // (window_size+d)
             window_point = float((syndrome.z - d) / (window_size+d))
@@ -182,6 +180,7 @@ class Toric(Sim):
         weight = 0
         for i0, i1 in matching:
             weight += self._correct_matched_qubits(syndromes[i0], syndromes[i1])
+        print(weight)
         return weight
 
     @staticmethod
@@ -301,6 +300,18 @@ class Toric(Sim):
             except:
                 break
         return qubit
+
+    # Determines whether corrections need to be applied or not based on presence in ncom
+    def process_matching(self, syndromes: LA, matching: list, d: int, parallel_processes: int):
+        for i0, i1 in matching:
+            q0 = syndromes[i0]
+            q1 = syndromes[i1]
+            
+            if self.commit(q0, d, parallel_processes) and self.commit(q1, d, parallel_processes):
+                self._correct_matched_qubits(q0, q1)
+            elif self.commit(q0, d, parallel_processes) ^ self.commit(q1, d, parallel_processes):
+                print(q0, q1)
+                self._correct_matched_qubits(q0, q1)
 
 
 class Planar(Toric):

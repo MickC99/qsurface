@@ -264,6 +264,7 @@ class Sim(ABC):
                     stars.append((ancilla, pseudo))
         return plaqs, stars
 
+
     @abstractmethod
     def decode(self, *args, **kwargs):
         """Decodes the surface loaded at ``self.code`` after all ancilla-qubits have been measured."""
