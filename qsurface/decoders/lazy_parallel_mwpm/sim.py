@@ -42,13 +42,14 @@ class Toric(Sim):
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
         d = self.code.size[0]
-        parallel_processes = 16
+        parallel_processes = 4
+
         A_n_plaqs = self.divide_into_windows(plaqs,  d, parallel_processes)
         A_n_stars = self.divide_into_windows(stars,  d, parallel_processes)
 
         # Run An windows in parallel for plaquettes
         with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.match_syndromes, A_n_plaqs.values())
+            matching_results = executor.map(self.lazy_decode_module, A_n_plaqs.values())
 
             # Apply corrections if both are in committed region
             syndrome_lists = list(A_n_plaqs.values())
@@ -63,7 +64,7 @@ class Toric(Sim):
                     
         # Run An windows in parallel for stars
         with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.match_syndromes, A_n_stars.values())
+            matching_results = executor.map(self.lazy_decode_module, A_n_stars.values())
 
             # Apply corrections if both are in committed region
             syndrome_lists = list(A_n_stars.values())
@@ -109,12 +110,6 @@ class Toric(Sim):
             # Wait for all the futures to complete
             for future in futures:
                 future.result()
-
-        # for ancilla in self.code.ancilla_qubits[self.code.decode_layer].values():
-        #     if ancilla.state:
-        #         print(ancilla, ancilla.state)
-        # if any(ancilla.state for ancilla in self.code.ancilla_qubits[self.code.decode_layer].values()):
-        #     print("Separate case", len(plaqs)) 
 
     # Divides decoding graph into windows and gaps
     def divide_into_windows(self, syndromes, d, parallel_processes):
@@ -295,7 +290,80 @@ class Toric(Sim):
                 weight = min([wy, size[1] - wy]) + min([wx, size[0] - wx]) + wz
                 edges.append([i0, i1 + i0 + 1, weight])
         return edges
+    
+    def lazy_decode_module(self, syndromes: LA, **kwargs):
+        
+        syndromes_copy = syndromes.copy()
+        
+        # Create list of edges
+        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
 
+        # Add vertical edges in case of faulty measurements, such that each layer is checked first and then its vertical edges
+        if type(self.code).__name__ == "FaultyMeasurements":
+            n = len(self.code.data_qubits)
+            plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
+            stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
+
+        # Performs lazy decoder first, mwpm when lazy fails FIX FIRST LAYER THEN TIME ETC.
+        lazy_attempt = self.lazy_checking(syndromes, plaqs_edges, **kwargs)
+
+        if lazy_attempt == "Failure":
+            syndromes = syndromes_copy
+
+    # Lazy Decoder implementation adjusted to fit parallel MWPM
+    def lazy_checking(self, syndromes: LA, edges, **kwargs):
+        error_list = []
+
+        if len(syndromes) == 0:
+            return
+        
+        # Iterate over all edges
+        for edge in edges:
+            ancilla1, ancilla2 = edge
+
+            # Check if both ancilla qubits are in the syndrome set
+            if ancilla1 in syndromes and ancilla2 in syndromes:
+                error_list.append(edge)
+                syndromes.remove(ancilla1)
+                syndromes.remove(ancilla2)
+        
+        # Return failure if there are syndromes left
+        if syndromes:
+            return "Failure"
+
+        # Correct all data qubit errors found
+        for pair in error_list:
+            top_layer_ancilla, key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
+            if key != "Time":
+                self.correct_edge(top_layer_ancilla, key)
+                
+    def _lazy_walk_direction(self, loc_q0: Tuple[float, float], loc_q1: Tuple[float, float], size: Tuple[float, float]):
+        
+        # Ensures that the correct time-layer is used
+        ancillas = self.code.ancilla_qubits[self.code.decode_layer]
+        aq1 = ancillas[loc_q1]
+
+        x0, y0 = loc_q0
+        x1, y1 = loc_q1
+
+        dx0 = int(x0 - x1) % size[0]
+        dx1 = int(x1 - x0) % size[0]
+        dy0 = int(y0 - y1) % size[1]
+        dy1 = int(y1 - y0) % size[1]
+        
+        # Calculate direction key for aq1 for edge to aq0
+        xd = (0.5, 0) if dx0 < dx1 else (-0.5, 0) if dx0 > dx1 else (0, 0)
+        yd = (0, 0.5) if dy0 < dy1 else (0, -0.5) if dy0 > dy1 else (0, 0)
+        
+        # Return correct key in cases of either faulty measurement or qubit error
+        if xd != (0, 0):
+            return (aq1, xd)
+        elif yd != (0, 0):
+            return (aq1, yd)
+        else:
+            return (aq1, "Time")
+        
     def _correct_matched_qubits(self, aq0: AncillaQubit, aq1: AncillaQubit) -> float:
         """Flips the values of edges between two matched qubits by doing a walk in between."""
         ancillas = self.code.ancilla_qubits[self.code.decode_layer]

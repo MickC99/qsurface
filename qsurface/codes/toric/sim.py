@@ -1,6 +1,8 @@
 from ..elements import AncillaQubit
 from .._template.sim import PerfectMeasurements as TemplatePM, FaultyMeasurements as TemplateFM
-
+from ...errors.pauli import Sim as Pauli
+import random, time
+import pandas as pd
 
 class PerfectMeasurements(TemplatePM):
     # Inherited docstring
@@ -81,5 +83,6 @@ class PerfectMeasurements(TemplatePM):
 
 
 class FaultyMeasurements(TemplateFM, PerfectMeasurements):
-    # Inherited docstring
+    # # Inherited docstring
+    
     pass
