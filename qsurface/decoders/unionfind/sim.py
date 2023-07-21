@@ -212,6 +212,16 @@ class Toric(Sim):
         The cluster is then placed into a bucket based on its size and parity by `place_bucket`. See `grow_clusters` for more information on buckets.
         """
         plaqs, stars = self.get_syndrome()
+        # COMMENT OUT THIS PART FOR ACCURATE COMPARISON WITH LAZY DECODER
+        # Create list of edges
+        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
+
+        # Add vertical edges in case of faulty measurements, such that each layer is checked first and then its vertical edges
+        if type(self.code).__name__ == "FaultyMeasurements":
+            n = len(self.code.data_qubits)
+            plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
+            stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
         for ancilla in plaqs + stars:
             if ancilla.cluster is None or ancilla.cluster.instance != self.code.instance:
                 cluster = self._Cluster(self.cluster_index, self.code.instance)

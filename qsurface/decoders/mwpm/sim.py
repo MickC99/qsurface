@@ -35,6 +35,7 @@ class Toric(Sim):
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
         
+        # COMMENT OUT THIS PART FOR ACCURATE COMPARISON WITH LAZY DECODER
         # Create list of edges
         plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
         stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]

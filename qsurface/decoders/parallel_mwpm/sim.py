@@ -41,94 +41,83 @@ class Toric(Sim):
         
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
-        d = self.code.size[0]
-        parallel_processes = 16
-        A_n_plaqs = self.divide_into_windows(plaqs,  d, parallel_processes)
-        A_n_stars = self.divide_into_windows(stars,  d, parallel_processes)
+        parallel_processes = 4
 
-        # Run An windows in parallel for plaquettes
-        with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.match_syndromes, A_n_plaqs.values())
+        self.parallel_decoding(plaqs, self.code.size[0], parallel_processes)
+        self.parallel_decoding(stars, self.code.size[0], parallel_processes)
 
-            # Apply corrections if both are in committed region
-            syndrome_lists = list(A_n_plaqs.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.process_matching, plaqs, syndromes, matching, d, parallel_processes)
-                futures.append(future)
 
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
-                    
-        # Run An windows in parallel for stars
-        with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.match_syndromes, A_n_stars.values())
-
-            # Apply corrections if both are in committed region
-            syndrome_lists = list(A_n_stars.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.process_matching, stars, syndromes, matching, d, parallel_processes)
-                futures.append(future)
-
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
-
-        # Divide remaining syndromes in Bn windows     
-        B_n_plaqs = self.second_divide_into_windows(plaqs, d, parallel_processes)
-        B_n_stars = self.second_divide_into_windows(stars, d, parallel_processes)
-
-        # Run Bn window decoding in parallel for plaquettes
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_processes) as executor:
-            matching_results = list(executor.map(self.match_syndromes, B_n_plaqs.values()))
-            
-            # Apply corrections for remaining qubits
-            syndrome_lists = list(B_n_plaqs.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.correct_matching, syndromes, matching)
-                futures.append(future)
-
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
+    def parallel_decoding(self, syndromes_list: LA, d: int, parallel_processes: int):
         
-        # Run Bn window decoding in parallel for stars
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_processes) as executor:
-            matching_results = list(executor.map(self.match_syndromes, B_n_stars.values()))
-            
-            # Apply corrections for remaining qubits
-            syndrome_lists = list(B_n_stars.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.correct_matching, syndromes, matching)
-                futures.append(future)
+        # Divide syndromes into An windows
+        A_n_windows = self.divide_into_windows(syndromes_list, d, parallel_processes)
+        
+        # Create parallel threads to run An windows in parallel
+        with ThreadPoolExecutor(max_workers=parallel_processes) as executor:
 
-            # Wait for all the futures to complete
-            for future in futures:
+            # Match syndromes in An windows
+            matching_results_A_n = executor.map(self.match_syndromes, A_n_windows.values())
+            syndrome_lists = list(A_n_windows.values())
+            futures_A_n = [[] for _ in range(parallel_processes)]
+
+            processed_indices = set()
+            b_futures = []
+
+            # Checks if syndromes can be committed to after completion of i window decoding
+            for i, (matching, syndromes_sublist) in enumerate(zip(matching_results_A_n, syndrome_lists)):
+                future = executor.submit(self.process_matching, syndromes_list, syndromes_sublist, matching, d, parallel_processes)
+                futures_A_n[i] = future
+                
+
+                # Run Bn windows in parallel after adjacent An windows have been completed
+                for i in range(parallel_processes-1):
+                    if futures_A_n[i] != [] and futures_A_n[i + 1] != [] and futures_A_n[i].done() and futures_A_n[i+1].done():
+                        a_n_index = i
+                        
+                        # Ensure that Bn window is not decoded more than once
+                        if a_n_index not in processed_indices:
+                            B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
+                            b_future = executor.submit(self.Bn_windows_matching, B_n_windows, a_n_index)
+                            b_futures.append(b_future)
+                            processed_indices.add(a_n_index)
+
+            # Wait for all An windows to complete
+            for future in futures_A_n:
+                future.result()
+            
+            # Final adjustment of Bn windows
+            B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
+            
+            # Correct the Bn windows of which the adjacent An windows have been decoded last
+            for i in range(parallel_processes-1):
+                if i not in processed_indices:
+                    b_future = executor.submit(self.Bn_windows_matching, B_n_windows, i)
+                    b_futures.append(b_future)
+
+            # Wait for all Bn windows to complete
+            for future in b_futures:
                 future.result()
 
-        # for ancilla in self.code.ancilla_qubits[self.code.decode_layer].values():
-        #     if ancilla.state:
-        #         print(ancilla, ancilla.state)
-        # if any(ancilla.state for ancilla in self.code.ancilla_qubits[self.code.decode_layer].values()):
-        #     print("Separate case", len(plaqs)) 
 
+    # Decodes the Bn-windows
+    def Bn_windows_matching(self, B_n_plaqs: LA, i: int, **kwargs):
+
+        matching_b = self.match_syndromes(list(B_n_plaqs.values())[i], **kwargs)
+        self.correct_matching(list(B_n_plaqs.values())[i], matching_b)
+        
     # Divides decoding graph into windows and gaps
     def divide_into_windows(self, syndromes, d, parallel_processes):
         windows = {}
 
         window_size = 3*d
         
+        for i in range(parallel_processes):
+            windows[i] = []
         # O(n)
         for syndrome in syndromes:
             window_index = syndrome.z // (window_size * (4/3))
             window_point = float(syndrome.z / (window_size * (4/3)))
 
-            if window_index not in windows:
-                windows[window_index] = []
 
             if 0 <= (window_point % 1) < 0.75:
                 windows[window_index].append(syndrome)
@@ -142,6 +131,9 @@ class Toric(Sim):
         windows = {}
 
         window_size = 3 * d
+
+        for i in range(parallel_processes-1):
+            windows[i] = []
                 
         # O(n)
         for syndrome in syndromes:
@@ -149,9 +141,6 @@ class Toric(Sim):
                 continue
             window_index = (syndrome.z - d) // (window_size+d)
             window_point = float((syndrome.z - d) / (window_size+d))
-
-            if window_index not in windows:
-                windows[window_index] = []
 
             if 0.25 <= (window_point % 1) < 1:
                 windows[window_index].append(syndrome)
@@ -315,7 +304,6 @@ class Toric(Sim):
         dq1 = ancillas[aq1.loc] if aq1.loc in ancillas else pseudos[aq1.loc]
 
         dx, dy, xd, yd = self._walk_direction(aq0, aq1, self.code.size)
-
         correction = False
         if self.commit(aq0, d, parallel_processes):
             buffer_layer_ancilla_aq0 = self.code.ancilla_qubits[aq1.z][aq0.loc]
@@ -375,8 +363,12 @@ class Toric(Sim):
         for i0, i1 in matching:
             q0 = syndromes[i0]
             q1 = syndromes[i1]
+
+            # Commit to corrections only if both elements are in the committed region
             if self.commit(q0, d, parallel_processes) and self.commit(q1, d, parallel_processes):
                 self._correct_matched_qubits(q0, q1)
+            
+            # Construct path when only one syndrome is in the committed region
             elif self.commit(q0, d, parallel_processes) ^ self.commit(q1, d, parallel_processes):
                 self._correct_matched_qubits_nbuf_ncom(q0,q1,d,parallel_processes,full_syndromes)
 
