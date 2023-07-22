@@ -41,94 +41,130 @@ class Toric(Sim):
         
         # Inherited docstring
         plaqs, stars = self.get_syndrome()
-        d = self.code.size[0]
         parallel_processes = 4
 
-        A_n_plaqs = self.divide_into_windows(plaqs,  d, parallel_processes)
-        A_n_stars = self.divide_into_windows(stars,  d, parallel_processes)
+        # Retrieve edge lists
+        n = len(self.code.data_qubits)
+        plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
+        stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
 
-        # Run An windows in parallel for plaquettes
-        with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.lazy_decode_module, A_n_plaqs.values())
+        # Run parallel decoding
+        self.lazy_parallel_decoding(plaqs, plaqs_edges, self.code.size[0], parallel_processes)
+        self.lazy_parallel_decoding(stars, stars_edges, self.code.size[0], parallel_processes)
 
-            # Apply corrections if both are in committed region
-            syndrome_lists = list(A_n_plaqs.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.process_matching, plaqs, syndromes, matching, d, parallel_processes)
-                futures.append(future)
 
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
-                    
-        # Run An windows in parallel for stars
-        with ThreadPoolExecutor(max_workers=parallel_processes+1) as executor:
-            matching_results = executor.map(self.lazy_decode_module, A_n_stars.values())
-
-            # Apply corrections if both are in committed region
-            syndrome_lists = list(A_n_stars.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.process_matching, stars, syndromes, matching, d, parallel_processes)
-                futures.append(future)
-
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
-
-        # Divide remaining syndromes in Bn windows     
-        B_n_plaqs = self.second_divide_into_windows(plaqs, d, parallel_processes)
-        B_n_stars = self.second_divide_into_windows(stars, d, parallel_processes)
-
-        # Run Bn window decoding in parallel for plaquettes
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_processes) as executor:
-            matching_results = list(executor.map(self.match_syndromes, B_n_plaqs.values()))
-            
-            # Apply corrections for remaining qubits
-            syndrome_lists = list(B_n_plaqs.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.correct_matching, syndromes, matching)
-                futures.append(future)
-
-            # Wait for all the futures to complete
-            for future in futures:
-                future.result()
+    def lazy_parallel_decoding(self, syndromes_list: LA, edges, d: int, parallel_processes: int):
         
-        # Run Bn window decoding in parallel for stars
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_processes) as executor:
-            matching_results = list(executor.map(self.match_syndromes, B_n_stars.values()))
-            
-            # Apply corrections for remaining qubits
-            syndrome_lists = list(B_n_stars.values())
-            futures = []
-            for matching, syndromes in zip(matching_results, syndrome_lists):
-                future = executor.submit(self.correct_matching, syndromes, matching)
-                futures.append(future)
+        # Divide syndromes into An windows
+        A_n_windows = self.divide_into_windows(syndromes_list, d, parallel_processes)
+        
+        edge_list_A = [edges.copy() for _ in A_n_windows]
+        edge_list_B = [edges.copy() for _ in range(parallel_processes-1)]
 
-            # Wait for all the futures to complete
-            for future in futures:
+        # Create parallel threads to run An windows in parallel
+        with ThreadPoolExecutor(max_workers=parallel_processes) as executor:
+
+            # Match syndromes in An windows
+            matching_results_A_n = executor.map(self.lazy_attempt, A_n_windows.values(),  edge_list_A)
+            syndrome_lists = list(A_n_windows.values())
+            futures_A_n = [[] for _ in range(parallel_processes)]
+
+            processed_indices = set()
+            b_futures = []
+
+            # Checks if syndromes can be committed to after completion of i window decoding
+            for i, (matching, syndromes_sublist) in enumerate(zip(matching_results_A_n, syndrome_lists)):
+                future = executor.submit(self.process_matching, syndromes_list, syndromes_sublist, matching, d, parallel_processes)
+                futures_A_n[i] = future
+                
+
+                # Run Bn windows in parallel after adjacent An windows have been completed
+                for i in range(parallel_processes-1):
+                    if futures_A_n[i] != [] and futures_A_n[i + 1] != [] and futures_A_n[i].done() and futures_A_n[i+1].done():
+                        
+                        # Ensure that Bn window is not decoded more than once
+                        if i not in processed_indices:
+                            B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
+                            b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, edges, i)
+                            b_futures.append(b_future)
+                            processed_indices.add(i)
+
+            # Wait for all An windows to complete
+            for future in futures_A_n:
                 future.result()
+            
+            # Final adjustment of Bn windows
+            B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
+            
+            # Correct the Bn windows of which the adjacent An windows have been decoded last
+            for i in range(parallel_processes-1):
+                if i not in processed_indices:
+                    b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, edges, i)
+                    b_futures.append(b_future)
 
+            # Wait for all Bn windows to complete
+            for future in b_futures:
+                future.result()
+    
+    def lazy_attempt(self, syndromes: LA, edges, **kwargs):
+        attempt = self.lazy_checking(syndromes, edges, **kwargs)
+        if attempt == "Failure":
+            matching = self.match_syndromes(syndromes)
+            return matching
+        else:
+            return attempt
+        
+    # Implements the lazy decoder
+    def lazy_checking(self, syndromes: LA, edges, **kwargs):
+        matching = set()
+
+        if len(syndromes) == 0:
+            return matching
+        
+        # Create syndromes copy for original indices
+        syndromes_copy = syndromes.copy()
+
+        # Iterate over all edges
+        for edge in edges:
+            ancilla1, ancilla2 = edge
+
+            # Check if both ancilla qubits are in the syndrome set
+            if ancilla1 in syndromes_copy and ancilla2 in syndromes_copy:
+                index1 = syndromes.index(ancilla1)
+                index2 = syndromes.index(ancilla2)
+                matching.add((index1, index2))
+                syndromes_copy.remove(ancilla1)
+                syndromes_copy.remove(ancilla2)
+        
+        # Return failure if there are syndromes left
+        if syndromes_copy:
+            return "Failure"
+        else:
+            return matching
+
+    # Decodes the Bn-windows with Lazy Decoder implementation
+    def Bn_lazy_windows_matching(self, B_n_plaqs: LA, edges: list, i: int, **kwargs):
+        
+        matching_b = self.lazy_checking(list(B_n_plaqs.values())[i], edges, **kwargs)
+        if matching_b == "Failure":
+            matching_b = self.match_syndromes(list(B_n_plaqs.values())[i], **kwargs)
+        self.correct_matching(list(B_n_plaqs.values())[i], matching_b)
+        
     # Divides decoding graph into windows and gaps
     def divide_into_windows(self, syndromes, d, parallel_processes):
         windows = {}
 
         window_size = 3*d
         
+        for i in range(parallel_processes):
+            windows[i] = []
         # O(n)
         for syndrome in syndromes:
             window_index = syndrome.z // (window_size * (4/3))
             window_point = float(syndrome.z / (window_size * (4/3)))
 
-            if window_index not in windows:
-                windows[window_index] = []
-
             if 0 <= (window_point % 1) < 0.75:
                 windows[window_index].append(syndrome)
-                
-
 
         return windows
     
@@ -137,6 +173,9 @@ class Toric(Sim):
         windows = {}
 
         window_size = 3 * d
+
+        for i in range(parallel_processes-1):
+            windows[i] = []
                 
         # O(n)
         for syndrome in syndromes:
@@ -144,9 +183,6 @@ class Toric(Sim):
                 continue
             window_index = (syndrome.z - d) // (window_size+d)
             window_point = float((syndrome.z - d) / (window_size+d))
-
-            if window_index not in windows:
-                windows[window_index] = []
 
             if 0.25 <= (window_point % 1) < 1:
                 windows[window_index].append(syndrome)
@@ -290,80 +326,7 @@ class Toric(Sim):
                 weight = min([wy, size[1] - wy]) + min([wx, size[0] - wx]) + wz
                 edges.append([i0, i1 + i0 + 1, weight])
         return edges
-    
-    def lazy_decode_module(self, syndromes: LA, **kwargs):
-        
-        syndromes_copy = syndromes.copy()
-        
-        # Create list of edges
-        plaqs_edges = [self.code.data_qubits[i][(x, y)].edges['x'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
-        stars_edges = [self.code.data_qubits[i][(x, y)].edges['z'].nodes for i in self.code.data_qubits for (x, y) in self.code.data_qubits[i]]
 
-        # Add vertical edges in case of faulty measurements, such that each layer is checked first and then its vertical edges
-        if type(self.code).__name__ == "FaultyMeasurements":
-            n = len(self.code.data_qubits)
-            plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
-            stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
-
-        # Performs lazy decoder first, mwpm when lazy fails FIX FIRST LAYER THEN TIME ETC.
-        lazy_attempt = self.lazy_checking(syndromes, plaqs_edges, **kwargs)
-
-        if lazy_attempt == "Failure":
-            syndromes = syndromes_copy
-
-    # Lazy Decoder implementation adjusted to fit parallel MWPM
-    def lazy_checking(self, syndromes: LA, edges, **kwargs):
-        error_list = []
-
-        if len(syndromes) == 0:
-            return
-        
-        # Iterate over all edges
-        for edge in edges:
-            ancilla1, ancilla2 = edge
-
-            # Check if both ancilla qubits are in the syndrome set
-            if ancilla1 in syndromes and ancilla2 in syndromes:
-                error_list.append(edge)
-                syndromes.remove(ancilla1)
-                syndromes.remove(ancilla2)
-        
-        # Return failure if there are syndromes left
-        if syndromes:
-            return "Failure"
-
-        # Correct all data qubit errors found
-        for pair in error_list:
-            top_layer_ancilla, key = self._lazy_walk_direction(pair[0].loc, pair[1].loc, self.code.size)
-            if key != "Time":
-                self.correct_edge(top_layer_ancilla, key)
-                
-    def _lazy_walk_direction(self, loc_q0: Tuple[float, float], loc_q1: Tuple[float, float], size: Tuple[float, float]):
-        
-        # Ensures that the correct time-layer is used
-        ancillas = self.code.ancilla_qubits[self.code.decode_layer]
-        aq1 = ancillas[loc_q1]
-
-        x0, y0 = loc_q0
-        x1, y1 = loc_q1
-
-        dx0 = int(x0 - x1) % size[0]
-        dx1 = int(x1 - x0) % size[0]
-        dy0 = int(y0 - y1) % size[1]
-        dy1 = int(y1 - y0) % size[1]
-        
-        # Calculate direction key for aq1 for edge to aq0
-        xd = (0.5, 0) if dx0 < dx1 else (-0.5, 0) if dx0 > dx1 else (0, 0)
-        yd = (0, 0.5) if dy0 < dy1 else (0, -0.5) if dy0 > dy1 else (0, 0)
-        
-        # Return correct key in cases of either faulty measurement or qubit error
-        if xd != (0, 0):
-            return (aq1, xd)
-        elif yd != (0, 0):
-            return (aq1, yd)
-        else:
-            return (aq1, "Time")
-        
     def _correct_matched_qubits(self, aq0: AncillaQubit, aq1: AncillaQubit) -> float:
         """Flips the values of edges between two matched qubits by doing a walk in between."""
         ancillas = self.code.ancilla_qubits[self.code.decode_layer]
@@ -383,7 +346,6 @@ class Toric(Sim):
         dq1 = ancillas[aq1.loc] if aq1.loc in ancillas else pseudos[aq1.loc]
 
         dx, dy, xd, yd = self._walk_direction(aq0, aq1, self.code.size)
-
         correction = False
         if self.commit(aq0, d, parallel_processes):
             buffer_layer_ancilla_aq0 = self.code.ancilla_qubits[aq1.z][aq0.loc]
@@ -443,8 +405,12 @@ class Toric(Sim):
         for i0, i1 in matching:
             q0 = syndromes[i0]
             q1 = syndromes[i1]
+
+            # Commit to corrections only if both elements are in the committed region
             if self.commit(q0, d, parallel_processes) and self.commit(q1, d, parallel_processes):
                 self._correct_matched_qubits(q0, q1)
+            
+            # Construct path when only one syndrome is in the committed region
             elif self.commit(q0, d, parallel_processes) ^ self.commit(q1, d, parallel_processes):
                 self._correct_matched_qubits_nbuf_ncom(q0,q1,d,parallel_processes,full_syndromes)
 
