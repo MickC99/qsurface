@@ -44,28 +44,27 @@ class Toric(Sim):
         parallel_processes = 4
 
         # Retrieve edge lists
-        n = len(self.code.data_qubits)
-        plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
-        stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
+        An_plaqs_edges = self.edge_An_window_division(self.code.size[0], parallel_processes, 'x')
+        An_stars_edges = self.edge_An_window_division(self.code.size[0], parallel_processes, 'z')
+        
+        Bn_plaqs_edges = self.edge_Bn_window_division(self.code.size[0], parallel_processes, 'x')
+        Bn_stars_edges = self.edge_Bn_window_division(self.code.size[0], parallel_processes, 'z')
 
         # Run parallel decoding
-        self.lazy_parallel_decoding(plaqs, plaqs_edges, self.code.size[0], parallel_processes)
-        self.lazy_parallel_decoding(stars, stars_edges, self.code.size[0], parallel_processes)
+        self.lazy_parallel_decoding(plaqs, An_plaqs_edges, Bn_plaqs_edges, self.code.size[0], parallel_processes)
+        self.lazy_parallel_decoding(stars, An_stars_edges, Bn_stars_edges, self.code.size[0], parallel_processes)
 
 
-    def lazy_parallel_decoding(self, syndromes_list: LA, edges, d: int, parallel_processes: int):
+    def lazy_parallel_decoding(self, syndromes_list: LA, An_edges: list , Bn_edges: list, d: int, parallel_processes: int):
         
         # Divide syndromes into An windows
         A_n_windows = self.divide_into_windows(syndromes_list, d, parallel_processes)
-        
-        edge_list_A = [edges.copy() for _ in A_n_windows]
-        edge_list_B = [edges.copy() for _ in range(parallel_processes-1)]
 
         # Create parallel threads to run An windows in parallel
         with ThreadPoolExecutor(max_workers=parallel_processes) as executor:
 
             # Match syndromes in An windows
-            matching_results_A_n = executor.map(self.lazy_attempt, A_n_windows.values(),  edge_list_A)
+            matching_results_A_n = executor.map(self.lazy_attempt, A_n_windows.values(),  An_edges)
             syndrome_lists = list(A_n_windows.values())
             futures_A_n = [[] for _ in range(parallel_processes)]
 
@@ -85,7 +84,7 @@ class Toric(Sim):
                         # Ensure that Bn window is not decoded more than once
                         if i not in processed_indices:
                             B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
-                            b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, edges, i)
+                            b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, Bn_edges, i)
                             b_futures.append(b_future)
                             processed_indices.add(i)
 
@@ -99,7 +98,7 @@ class Toric(Sim):
             # Correct the Bn windows of which the adjacent An windows have been decoded last
             for i in range(parallel_processes-1):
                 if i not in processed_indices:
-                    b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, edges, i)
+                    b_future = executor.submit(self.Bn_lazy_windows_matching, B_n_windows, Bn_edges, i)
                     b_futures.append(b_future)
 
             # Wait for all Bn windows to complete
@@ -141,11 +140,37 @@ class Toric(Sim):
             return "Failure"
         else:
             return matching
+        
+    # Divides the edge list for the lazy decoder into windows
+    def edge_An_window_division(self, d: int, parallel_processes: int, type: str):
+        window_size =3*d
+        total_size = window_size + d
+
+        edge_list = []
+        
+        for index in range(parallel_processes):
+            edges = sum([[self.code.data_qubits[i][(x, y)].edges[type].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(index*total_size, index*total_size + window_size-1)], []) + [self.code.data_qubits[index*total_size + window_size-1][(x, y)].edges[type].nodes for (x, y) in self.code.data_qubits[index*total_size + window_size-1]]
+            edge_list.append(edges)
+
+        return edge_list
+    
+    # Divides the edge list for the lazy decoder into windows
+    def edge_Bn_window_division(self, d: int, parallel_processes: int, type: str):
+        window_size =3*d
+        total_size = window_size + d
+
+        edge_list = []
+        
+        for index in range(parallel_processes-1):
+            edges = sum([[self.code.data_qubits[i][(x, y)].edges[type].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(2*d+index*total_size, 2*d+index*total_size + window_size-1)], []) + [self.code.data_qubits[2*d+index*total_size + window_size-1][(x, y)].edges[type].nodes for (x, y) in self.code.data_qubits[2*d+index*total_size + window_size-1]]
+            edge_list.append(edges)
+
+        return edge_list
 
     # Decodes the Bn-windows with Lazy Decoder implementation
     def Bn_lazy_windows_matching(self, B_n_plaqs: LA, edges: list, i: int, **kwargs):
         
-        matching_b = self.lazy_checking(list(B_n_plaqs.values())[i], edges, **kwargs)
+        matching_b = self.lazy_checking(list(B_n_plaqs.values())[i], edges[i], **kwargs)
         if matching_b == "Failure":
             matching_b = self.match_syndromes(list(B_n_plaqs.values())[i], **kwargs)
         self.correct_matching(list(B_n_plaqs.values())[i], matching_b)

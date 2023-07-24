@@ -53,16 +53,22 @@ import random
 benchmarker = BenchmarkDecoder({
 "decode": ["duration", "value_to_list"],
 "correct_edge": "count_calls"})
+benchmarker2 = BenchmarkDecoder({
+"decode": ["duration", "value_to_list"],
+"correct_edge": "count_calls"})
+
 
 # code, decoder = initialize((6,6), "toric", "lazy_mwpm", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_0_toric_rates_px_0.03_pz_0.03_pmx_0.03_pmz_0.03.csv", initial_states=(0,0))
 # # code, decoder = initialize((6,6), "weight_3_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_3_toric_px_0.025_pz_0.025_prx_0.025_prz_0.025_pmx_0.025_pmz_0.025_ghz_1.csv", initial_states=(0,0))
 # # code, decoder = initialize((6,6), "weight_4_toric", "unionfind", plotting=False, superoperator_enable=True, sup_op_file="./running/phenomenological_wt_4_toric_px_0.01_pz_0.01_pmx_0.01_pmz_0.01_ghz_1.csv", initial_states=(0,0))
 
-error_rate = 0.01
-code, decoder = initialize((4,4), "toric", "lazy_parallel_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0), layers = 15*4)
-print(run(code, decoder, iterations=1000, decode_initial=False, error_rates = {"p_bitflip": error_rate, "p_phaseflip": 0, "p_bitflip_plaq": error_rate, "p_bitflip_star": 0}, benchmark=benchmarker))
-code, decoder = initialize((4,4), "toric", "parallel_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0), layers = 15*4)
-print(run(code, decoder, iterations=1000, decode_initial=False, error_rates = {"p_bitflip": error_rate, "p_phaseflip": 0, "p_bitflip_plaq": error_rate, "p_bitflip_star": 0}, benchmark=benchmarker))
+error_rate = 0.001
+for d in [7,9,11,13]:
+   code, decoder = initialize((d,d), "toric", "parallel_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0), layers = 15*d)
+   print(run(code, decoder, iterations=10000, decode_initial=False, error_rates = {"p_bitflip": error_rate, "p_phaseflip": error_rate, "p_bitflip_plaq": error_rate, "p_bitflip_star": error_rate}, benchmark=benchmarker))
+   code, decoder = initialize((d,d), "toric", "lazy_parallel_mwpm", plotting=False, enabled_errors=["pauli"], faulty_measurements=True, initial_states = (0,0), layers = 15*d)
+   print(run(code, decoder, iterations=10000, decode_initial=False, error_rates = {"p_bitflip": error_rate, "p_phaseflip": error_rate, "p_bitflip_plaq": error_rate, "p_bitflip_star": error_rate}, benchmark=benchmarker))
+   print(d)
 # print(run(code, decoder, iterations=20, decode_initial=False, benchmark=benchmarker))
 
 # # Fo

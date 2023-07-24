@@ -43,10 +43,15 @@ class Toric(Sim):
         plaqs, stars = self.get_syndrome()
         parallel_processes = 4
 
+        # Only comment out this part in testing lazy_parallel vs parallel
+        n = len(self.code.data_qubits)
+        plaqs_edges = sum([[self.code.data_qubits[i][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['x'].nodes for (x, y) in self.code.data_qubits[n-1]]
+        stars_edges = sum([[self.code.data_qubits[i][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[i]] + self.code.time_edges[i] for i in range(n-1)], []) + [self.code.data_qubits[n-1][(x, y)].edges['z'].nodes for (x, y) in self.code.data_qubits[n-1]]
+        
         self.parallel_decoding(plaqs, self.code.size[0], parallel_processes)
         self.parallel_decoding(stars, self.code.size[0], parallel_processes)
 
-
+ 
     def parallel_decoding(self, syndromes_list: LA, d: int, parallel_processes: int):
         
         # Divide syndromes into An windows
@@ -87,7 +92,12 @@ class Toric(Sim):
             
             # Final adjustment of Bn windows
             B_n_windows = self.second_divide_into_windows(syndromes_list, d, parallel_processes)
-            
+
+            # Test to see if odd parity hypothesis is true
+            # for item in B_n_windows.values():
+            #     if len(item) % 2 != 0:
+            #         print(len(item))
+
             # Correct the Bn windows of which the adjacent An windows have been decoded last
             for i in range(parallel_processes-1):
                 if i not in processed_indices:
@@ -97,7 +107,8 @@ class Toric(Sim):
             # Wait for all Bn windows to complete
             for future in b_futures:
                 future.result()
-
+        
+    
 
     # Decodes the Bn-windows
     def Bn_windows_matching(self, B_n_plaqs: LA, i: int, **kwargs):

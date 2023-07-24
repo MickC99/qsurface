@@ -54,15 +54,18 @@ benchmarker = BenchmarkDecoder({
 # print(mwpm_time)
 # print(uf_time)
 
+# physical_qubits = []
+# for d in [3, 4, 5, 7, 8, 9, 11, 12, 13, 15, 16, 18]:
+#     physical_qubits.append(4*d*d)
 
 # plt.plot(physical_qubits, lazy_time, 'o-', color = 'cyan', label='Lazier + MWPM')
 # plt.plot(physical_qubits, mwpm_time, 'bo-', label='None + MWPM')
 # plt.plot(physical_qubits, uf_time, 'o-', color = 'red', label='None + UF')
 # plt.xlim(0, 1350)
-# plt.ylim(5 * 10**(-5), 10**(-2))
+# plt.ylim(5*10**(-5), 10**(-2))
 # plt.grid(True)
 # plt.xlabel('Number of physical qubits')
-# plt.ylabel('Execution time')
+# plt.ylabel('Execution time (s)')
 # plt.title('pZ = 0.02')
 # plt.yscale('log')
 # plt.legend()
@@ -101,6 +104,7 @@ benchmarker = BenchmarkDecoder({
 #    # figure here
 # print(speedup)
 # print(lazy_success, mwpm_success)
+
 
 # plt.plot(physical_qubits, lazy_time, 'o-', color = 'cyan', label='Lazier + MWPM')
 # plt.plot(physical_qubits, mwpm_time, 'bo-', label='None + MWPM')
